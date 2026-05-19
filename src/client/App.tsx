@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "./api";
 import type {
   CaseListType,
@@ -212,10 +212,14 @@ function CaseQueues({ onOpenClient }: { onOpenClient: (id: number) => void }) {
 function ClientDrawer({ client, onClose, onSaved }: { client: ClientDetail | undefined; onClose: () => void; onSaved: (client: ClientDetail) => void }) {
   const [draft, setDraft] = useState<ClientDetail | undefined>(client);
   const [status, setStatus] = useState("");
+  const previousClientId = useRef<number | undefined>(undefined);
 
   useEffect(() => {
     setDraft(client);
-    setStatus("");
+    if (client?.id !== previousClientId.current) {
+      setStatus("");
+    }
+    previousClientId.current = client?.id;
   }, [client]);
 
   if (!draft) {

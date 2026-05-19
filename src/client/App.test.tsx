@@ -98,5 +98,10 @@ describe("App", () => {
     await user.click(screen.getByText("Santos, Maria"));
     await waitFor(() => expect(screen.getByRole("complementary", { name: "Client detail" })).toBeInTheDocument());
     expect(screen.getByText("Forwarded intake summary to legal research.")).toBeInTheDocument();
+
+    await user.clear(screen.getByDisplayValue("Urgent"));
+    await user.type(screen.getByLabelText("Priority"), "Urgent - Confirmed");
+    await user.click(screen.getByRole("button", { name: "Update client info" }));
+    expect(await screen.findByText("Client successfully updated.")).toBeInTheDocument();
   });
 });
