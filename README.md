@@ -5,6 +5,21 @@ i4.scas.info
 This database, developed by Willy Xiao, serves the needs of the Small Claims Advisory Service, an organization that provides information for residents of Massachusetts going through the small claims court system. Their website is masmallclaims.org.
 Look at Documentation.md to learn how to develop for the SCAS i4. 
 
+Modern TypeScript app
+=====
+
+This repository now includes a React TypeScript frontend and a Node.js TypeScript API alongside the legacy PHP source.
+
+Run the TypeScript app:
+
+* `npm install`
+* `npm run dev` starts the Node/Express API on port 4000.
+* `npm run dev:client` starts the Vite React frontend and proxies `/api` to the backend.
+* `npm run test` runs the API and React regression tests.
+* `npm run build` type-checks the TypeScript code and builds the React app.
+
+The first TypeScript implementation ports the main i4 workflows into typed routes and components: dashboard, case lists, find/add client, client detail updates, users, and leaderboard.
+
 How to use the i4
 =====
 
