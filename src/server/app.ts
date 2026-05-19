@@ -151,7 +151,12 @@ export function createApp(repository: I4Repository = new InMemoryI4Repository())
 
   const distPath = path.resolve(process.cwd(), "dist");
   app.use(express.static(distPath));
-  app.get("*", (_request, response) => {
+  app.use((request, response, next) => {
+    if (request.method !== "GET") {
+      next();
+      return;
+    }
+
     response.sendFile(path.join(distPath, "index.html"));
   });
 

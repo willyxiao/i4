@@ -27,7 +27,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return envelope.data;
 }
 
-function toQuery(params: Record<string, string | undefined>): string {
+function toQuery(params: ClientSearchParams): string {
   const query = new URLSearchParams();
   Object.entries(params).forEach(([key, value]) => {
     if (value) {

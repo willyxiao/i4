@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
@@ -89,7 +89,8 @@ describe("App", () => {
     render(<App />);
 
     await user.click(await screen.findByRole("button", { name: "Find/Add Client" }));
-    await user.type(screen.getByPlaceholderText("Last name"), "Santos");
+    const searchForm = screen.getByRole("form", { name: "Search clients" });
+    await user.type(within(searchForm).getByPlaceholderText("Last name"), "Santos");
     await user.click(screen.getByRole("button", { name: "Search" }));
 
     expect(await screen.findByText("Santos, Maria")).toBeInTheDocument();
