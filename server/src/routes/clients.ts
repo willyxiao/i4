@@ -1,11 +1,10 @@
 import { Router, Request, Response } from "express";
-import { getDb } from "../db";
+import { dbAll, dbGet, dbRun } from "../db";
 import { requireAuth, requireNonComper } from "../middleware/auth";
 
 const router = Router();
 
-router.get("/search", requireAuth, (req: Request, res: Response) => {
-  const db = getDb();
+router.get("/search", requireAuth, async (req: Request, res: Response) => {
   const { ClientId, FirstName, LastName, PhoneNumber, Email } = req.query;
 
   const conditions: string[] = [];
@@ -53,47 +52,44 @@ router.get("/search", requireAuth, (req: Request, res: Response) => {
     LIMIT 100
   `;
 
-  const rows = db.prepare(query).all(...params);
+  const rows = await dbAll(query, ...params);
   res.json(rows);
 });
 
-router.get("/:id", requireAuth, (req: Request, res: Response) => {
-  const db = getDb();
+router.get("/:id", requireAuth, async (req: Request, res: Response) => {
   const clientId = req.params.id;
 
-  const client = db
-    .prepare(
-      `SELECT c.*, ct.Description as Priority, cat.Description as Category
-       FROM db_Clients c
-       LEFT JOIN db_CaseTypes ct ON ct.CaseTypeID = c.CaseTypeID
-       LEFT JOIN db_Categories cat ON cat.CategoryID = c.CategoryID
-       WHERE c.ClientID = ?`
-    )
-    .get(clientId) as any;
+  const client = await dbGet<any>(
+    `SELECT c.*, ct.Description as Priority, cat.Description as Category
+     FROM db_Clients c
+     LEFT JOIN db_CaseTypes ct ON ct.CaseTypeID = c.CaseTypeID
+     LEFT JOIN db_Categories cat ON cat.CategoryID = c.CategoryID
+     WHERE c.ClientID = ?`,
+    clientId
+  );
 
   if (!client) {
     return res.status(404).json({ error: "Client not found" });
   }
 
-  // Get i4 contacts
-  const contacts = db
-    .prepare(
-      `SELECT c.*, ct.Description as ContactType
-       FROM dbi4_Contacts c
-       LEFT JOIN db_ContactTypes ct ON ct.ContactTypeID = c.ContactTypeID
-       WHERE c.ClientID = ?
-       ORDER BY c.ContactDate DESC`
-    )
-    .all(clientId) as any[];
+  const contacts = await dbAll<any>(
+    `SELECT c.*, ct.Description as ContactType
+     FROM dbi4_Contacts c
+     LEFT JOIN db_ContactTypes ct ON ct.ContactTypeID = c.ContactTypeID
+     WHERE c.ClientID = ?
+     ORDER BY c.ContactDate DESC`,
+    clientId
+  );
 
-  // Enrich contacts with user names
   for (const contact of contacts) {
-    const addedUser = db
-      .prepare("SELECT UserName, Email FROM i3_Users WHERE UserID = ?")
-      .get(contact.UserAddedID) as any;
-    const editUser = db
-      .prepare("SELECT UserName, Email FROM i3_Users WHERE UserID = ?")
-      .get(contact.UserEditID) as any;
+    const addedUser = await dbGet<any>(
+      "SELECT UserName, Email FROM i3_Users WHERE UserID = ?",
+      contact.UserAddedID
+    );
+    const editUser = await dbGet<any>(
+      "SELECT UserName, Email FROM i3_Users WHERE UserID = ?",
+      contact.UserEditID
+    );
 
     contact.UserNameAdded = addedUser?.UserName || "Unknown";
     contact.UserNameEdit = editUser?.UserName || "Unknown";
@@ -101,28 +97,33 @@ router.get("/:id", requireAuth, (req: Request, res: Response) => {
     contact.UserEmailEdit = editUser?.Email || "";
   }
 
-  // Get old i3 contacts
-  const oldCaseInfo = db
-    .prepare("SELECT * FROM db_CaseInfo WHERE ClientID = ?")
-    .all(clientId) as any[];
+  const oldCaseInfo = await dbAll<any>(
+    "SELECT * FROM db_CaseInfo WHERE ClientID = ?",
+    clientId
+  );
 
-  const oldContacts = db
-    .prepare("SELECT * FROM db_Contact WHERE ClientID = ?")
-    .all(clientId) as any[];
+  const oldContacts = await dbAll<any>(
+    "SELECT * FROM db_Contact WHERE ClientID = ?",
+    clientId
+  );
 
-  // Enrich old contacts
   for (const oc of oldContacts) {
-    const user = db
-      .prepare("SELECT UserName FROM i3_Users WHERE UserID = ?")
-      .get(oc.UserID) as any;
-    const ct = db
-      .prepare("SELECT Description FROM db_ContactTypes WHERE ContactTypeID = ?")
-      .get(oc.ContactTypeID) as any;
+    const user = await dbGet<any>(
+      "SELECT UserName FROM i3_Users WHERE UserID = ?",
+      oc.UserID
+    );
+    const ct = await dbGet<any>(
+      "SELECT Description FROM db_ContactTypes WHERE ContactTypeID = ?",
+      oc.ContactTypeID
+    );
     oc.UserName = user?.UserName || "Unknown";
     oc.ContactType = ct?.Description || "Unknown";
   }
 
-  const oldNotes = oldCaseInfo.map((ci: any) => ci.Notes).filter(Boolean).join("\n");
+  const oldNotes = oldCaseInfo
+    .map((ci: any) => ci.Notes)
+    .filter(Boolean)
+    .join("\n");
 
   res.json({
     client,
@@ -135,72 +136,90 @@ router.get("/:id", requireAuth, (req: Request, res: Response) => {
   });
 });
 
-router.post("/", requireAuth, (req: Request, res: Response) => {
-  const db = getDb();
+router.post("/", requireAuth, async (req: Request, res: Response) => {
   const {
-    FirstName, LastName, Phone1Number, Phone2Number,
-    Email, Address, City, State, Zip, Language, ClientNotes,
-    CaseTypeID, CategoryID,
+    FirstName,
+    LastName,
+    Phone1Number,
+    Phone2Number,
+    Email,
+    Address,
+    City,
+    State,
+    Zip,
+    Language,
+    ClientNotes,
+    CaseTypeID,
+    CategoryID,
   } = req.body;
 
   const phone1Digits = (Phone1Number || "").replace(/\D/g, "");
   const phone2Digits = (Phone2Number || "").replace(/\D/g, "");
 
-  const result = db
-    .prepare(
-      `INSERT INTO db_Clients (FirstName, LastName, Phone1AreaCode, Phone1Number,
-        Phone2AreaCode, Phone2Number, Email, Address1, City, State, ZIP, Language,
-        Notes, CaseTypeID, CategoryID) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    )
-    .run(
-      FirstName || "",
-      LastName || "",
-      phone1Digits.substring(0, 3),
-      phone1Digits.length > 3
-        ? phone1Digits.substring(3, 6) + "-" + phone1Digits.substring(6)
-        : "",
-      phone2Digits.substring(0, 3),
-      phone2Digits.length > 3
-        ? phone2Digits.substring(3, 6) + "-" + phone2Digits.substring(6)
-        : "",
-      Email || "",
-      Address || "",
-      City || "",
-      State || "",
-      Zip || "",
-      Language || "English",
-      ClientNotes || "",
-      CaseTypeID || 0,
-      CategoryID || 0
-    );
+  const result = await dbRun(
+    `INSERT INTO db_Clients (FirstName, LastName, Phone1AreaCode, Phone1Number,
+      Phone2AreaCode, Phone2Number, Email, Address1, City, State, ZIP, Language,
+      Notes, CaseTypeID, CategoryID) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    FirstName || "",
+    LastName || "",
+    phone1Digits.substring(0, 3),
+    phone1Digits.length > 3
+      ? phone1Digits.substring(3, 6) + "-" + phone1Digits.substring(6)
+      : "",
+    phone2Digits.substring(0, 3),
+    phone2Digits.length > 3
+      ? phone2Digits.substring(3, 6) + "-" + phone2Digits.substring(6)
+      : "",
+    Email || "",
+    Address || "",
+    City || "",
+    State || "",
+    Zip || "",
+    Language || "English",
+    ClientNotes || "",
+    CaseTypeID || 0,
+    CategoryID || 0
+  );
 
-  // Create initial contact
   const now = new Date().toISOString().replace("T", " ").substring(0, 19);
-  db.prepare(
+  await dbRun(
     `INSERT INTO dbi4_Contacts (ClientID, ContactTypeID, ContactDate, ContactEditDate,
-      UserAddedID, UserEditID, ContactSummary) VALUES (?, 1, ?, ?, ?, ?, 'Client record created.')`
-  ).run(result.lastInsertRowid, now, now, req.session.userId, req.session.userId);
+      UserAddedID, UserEditID, ContactSummary) VALUES (?, 1, ?, ?, ?, ?, 'Client record created.')`,
+    result.lastInsertId,
+    now,
+    now,
+    req.session.userId,
+    req.session.userId
+  );
 
-  res.json({ success: true, ClientID: result.lastInsertRowid });
+  res.json({ success: true, ClientID: result.lastInsertId });
 });
 
-router.put("/:id", requireAuth, (req: Request, res: Response) => {
-  const db = getDb();
+router.put("/:id", requireAuth, async (req: Request, res: Response) => {
   const clientId = req.params.id;
   const {
-    FirstName, LastName, Phone1Number, Phone2Number,
-    Email, Address, City, State, Zip, Language, ClientNotes,
-    CaseTypeID, CategoryID,
+    FirstName,
+    LastName,
+    Phone1Number,
+    Phone2Number,
+    Email,
+    Address,
+    City,
+    State,
+    Zip,
+    Language,
+    ClientNotes,
+    CaseTypeID,
+    CategoryID,
   } = req.body;
 
   const phone1Digits = (Phone1Number || "").replace(/\D/g, "");
   const phone2Digits = (Phone2Number || "").replace(/\D/g, "");
 
-  db.prepare(
+  await dbRun(
     `UPDATE db_Clients SET FirstName=?, LastName=?, Phone1AreaCode=?, Phone1Number=?,
       Phone2AreaCode=?, Phone2Number=?, Email=?, Address1=?, City=?, State=?, ZIP=?,
-      Language=?, Notes=?, CaseTypeID=?, CategoryID=? WHERE ClientID=?`
-  ).run(
+      Language=?, Notes=?, CaseTypeID=?, CategoryID=? WHERE ClientID=?`,
     FirstName || "",
     LastName || "",
     phone1Digits.substring(0, 3),
@@ -226,18 +245,16 @@ router.put("/:id", requireAuth, (req: Request, res: Response) => {
   res.json({ success: true });
 });
 
-router.delete("/:id", requireNonComper, (req: Request, res: Response) => {
-  const db = getDb();
+router.delete("/:id", requireNonComper, async (req: Request, res: Response) => {
   const clientId = req.params.id;
 
-  db.prepare("DELETE FROM dbi4_Contacts WHERE ClientID = ?").run(clientId);
-  db.prepare("DELETE FROM db_Clients WHERE ClientID = ?").run(clientId);
+  await dbRun("DELETE FROM dbi4_Contacts WHERE ClientID = ?", clientId);
+  await dbRun("DELETE FROM db_Clients WHERE ClientID = ?", clientId);
 
   res.json({ success: true });
 });
 
-router.post("/merge", requireNonComper, (req: Request, res: Response) => {
-  const db = getDb();
+router.post("/merge", requireNonComper, async (req: Request, res: Response) => {
   const { keepClientId, mergeClientId, mergedData } = req.body;
 
   if (!keepClientId || !mergeClientId) {
@@ -246,30 +263,30 @@ router.post("/merge", requireNonComper, (req: Request, res: Response) => {
       .json({ error: "Both keepClientId and mergeClientId are required" });
   }
 
-  // Move contacts from mergeClient to keepClient
-  db.prepare("UPDATE dbi4_Contacts SET ClientID = ? WHERE ClientID = ?").run(
+  await dbRun(
+    "UPDATE dbi4_Contacts SET ClientID = ? WHERE ClientID = ?",
     keepClientId,
     mergeClientId
   );
-  db.prepare("UPDATE db_Contact SET ClientID = ? WHERE ClientID = ?").run(
+  await dbRun(
+    "UPDATE db_Contact SET ClientID = ? WHERE ClientID = ?",
     keepClientId,
     mergeClientId
   );
-  db.prepare("UPDATE db_CaseInfo SET ClientID = ? WHERE ClientID = ?").run(
+  await dbRun(
+    "UPDATE db_CaseInfo SET ClientID = ? WHERE ClientID = ?",
     keepClientId,
     mergeClientId
   );
 
-  // Update keepClient with merged data if provided
   if (mergedData) {
     const phone1Digits = (mergedData.Phone1Number || "").replace(/\D/g, "");
     const phone2Digits = (mergedData.Phone2Number || "").replace(/\D/g, "");
 
-    db.prepare(
+    await dbRun(
       `UPDATE db_Clients SET FirstName=?, LastName=?, Phone1AreaCode=?, Phone1Number=?,
         Phone2AreaCode=?, Phone2Number=?, Email=?, Address1=?, City=?, State=?, ZIP=?,
-        Language=?, Notes=?, CaseTypeID=?, CategoryID=? WHERE ClientID=?`
-    ).run(
+        Language=?, Notes=?, CaseTypeID=?, CategoryID=? WHERE ClientID=?`,
       mergedData.FirstName || "",
       mergedData.LastName || "",
       phone1Digits.substring(0, 3),
@@ -293,8 +310,7 @@ router.post("/merge", requireNonComper, (req: Request, res: Response) => {
     );
   }
 
-  // Delete merged client
-  db.prepare("DELETE FROM db_Clients WHERE ClientID = ?").run(mergeClientId);
+  await dbRun("DELETE FROM db_Clients WHERE ClientID = ?", mergeClientId);
 
   res.json({ success: true, ClientID: keepClientId });
 });

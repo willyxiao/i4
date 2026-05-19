@@ -1,22 +1,18 @@
 import { Router, Request, Response } from "express";
 import bcrypt from "bcryptjs";
-import { getDb } from "../db";
+import { dbAll, dbGet, dbRun } from "../db";
 import { requireAuth, requireAdmin, requireNonComper } from "../middleware/auth";
 
 const router = Router();
 
-router.get("/", requireAuth, (req: Request, res: Response) => {
-  const db = getDb();
-  const users = db
-    .prepare(
-      "SELECT UserID, UserName, Email, YOG, Comper, Hidden FROM i3_Users WHERE Hidden = 0 ORDER BY UserName"
-    )
-    .all();
+router.get("/", requireAuth, async (_req: Request, res: Response) => {
+  const users = await dbAll(
+    "SELECT UserID, UserName, Email, YOG, Comper, Hidden FROM i3_Users WHERE Hidden = 0 ORDER BY UserName"
+  );
   res.json(users);
 });
 
-router.get("/search", requireAuth, (req: Request, res: Response) => {
-  const db = getDb();
+router.get("/search", requireAuth, async (req: Request, res: Response) => {
   const { search, hidden, compers, yog } = req.query;
 
   let query = "SELECT DISTINCT UserID, UserName, Email FROM i3_Users WHERE ";
@@ -44,72 +40,66 @@ router.get("/search", requireAuth, (req: Request, res: Response) => {
   }
 
   query += conditions.join(" AND ") + " ORDER BY UserName LIMIT 100";
-  const users = db.prepare(query).all(...params);
+  const users = await dbAll(query, ...params);
   res.json(users);
 });
 
-router.get("/:id", requireAuth, (req: Request, res: Response) => {
-  const db = getDb();
+router.get("/:id", requireAuth, async (req: Request, res: Response) => {
   const userId = req.params.id;
 
-  const user = db
-    .prepare(
-      "SELECT UserID, UserName, Email, YOG, Comper, Hidden FROM i3_Users WHERE UserID = ?"
-    )
-    .get(userId) as any;
+  const user = await dbGet<any>(
+    "SELECT UserID, UserName, Email, YOG, Comper, Hidden FROM i3_Users WHERE UserID = ?",
+    userId
+  );
 
   if (!user) {
     return res.status(404).json({ error: "User not found" });
   }
 
-  const isAdmin =
-    db.prepare("SELECT UserID FROM i3_Admins WHERE UserID = ?").get(userId) !=
-    null;
+  const admin = await dbGet<any>(
+    "SELECT UserID FROM i3_Admins WHERE UserID = ?",
+    userId
+  );
+  const isAdmin = admin != null;
 
   res.json({ ...user, isAdmin });
 });
 
-router.put("/:id", requireAuth, (req: Request, res: Response) => {
-  const db = getDb();
+router.put("/:id", requireAuth, async (req: Request, res: Response) => {
   const userId = req.params.id;
   const { UserName, Email, YOG, CurrentPassword, NewPassword } = req.body;
 
-  // Can only edit own profile (or admin can edit anyone)
-  if (
-    Number(userId) !== req.session.userId &&
-    !req.session.isAdmin
-  ) {
+  if (Number(userId) !== req.session.userId && !req.session.isAdmin) {
     return res.status(403).json({ error: "Cannot edit another user's profile" });
   }
 
-  // Update basic info
-  db.prepare("UPDATE i3_Users SET UserName=?, Email=?, YOG=? WHERE UserID=?").run(
+  await dbRun(
+    "UPDATE i3_Users SET UserName=?, Email=?, YOG=? WHERE UserID=?",
     UserName,
     Email,
     YOG || 0,
     userId
   );
 
-  // Update password if provided
   if (NewPassword) {
     if (Number(userId) === req.session.userId) {
-      // Verify current password for self-edit
-      const pw = db
-        .prepare("SELECT hash FROM i3_Passwords WHERE UserID = ?")
-        .get(userId) as any;
+      const pw = await dbGet<any>(
+        "SELECT hash FROM i3_Passwords WHERE UserID = ?",
+        userId
+      );
       if (!pw || !bcrypt.compareSync(CurrentPassword || "", pw.hash)) {
         return res.status(400).json({ error: "Current password is incorrect" });
       }
     }
     const salt = bcrypt.genSaltSync(10);
     const hash = bcrypt.hashSync(NewPassword, salt);
-    db.prepare("UPDATE i3_Passwords SET hash = ? WHERE UserID = ?").run(
+    await dbRun(
+      "UPDATE i3_Passwords SET hash = ? WHERE UserID = ?",
       hash,
       userId
     );
   }
 
-  // Update session if editing own profile
   if (Number(userId) === req.session.userId) {
     req.session.username = UserName;
   }
@@ -117,40 +107,40 @@ router.put("/:id", requireAuth, (req: Request, res: Response) => {
   res.json({ success: true });
 });
 
-router.post("/", requireNonComper, (req: Request, res: Response) => {
-  const db = getDb();
+router.post("/", requireNonComper, async (req: Request, res: Response) => {
   const { UserName, Email, YOG, password } = req.body;
 
   if (!UserName || !Email) {
     return res.status(400).json({ error: "UserName and Email are required" });
   }
 
-  // Check if username exists
-  const existing = db
-    .prepare("SELECT UserID FROM i3_Users WHERE UserName = ?")
-    .get(UserName);
+  const existing = await dbGet(
+    "SELECT UserID FROM i3_Users WHERE UserName = ?",
+    UserName
+  );
   if (existing) {
     return res.status(400).json({ error: "Username already exists" });
   }
 
-  const result = db
-    .prepare(
-      "INSERT INTO i3_Users (UserName, Email, YOG, Comper) VALUES (?, ?, ?, 1)"
-    )
-    .run(UserName, Email, YOG || 0);
+  const result = await dbRun(
+    "INSERT INTO i3_Users (UserName, Email, YOG, Comper) VALUES (?, ?, ?, 1)",
+    UserName,
+    Email,
+    YOG || 0
+  );
 
   const salt = bcrypt.genSaltSync(10);
   const hash = bcrypt.hashSync(password || "password", salt);
-  db.prepare("INSERT INTO i3_Passwords (UserID, hash) VALUES (?, ?)").run(
-    result.lastInsertRowid,
+  await dbRun(
+    "INSERT INTO i3_Passwords (UserID, hash) VALUES (?, ?)",
+    result.lastInsertId,
     hash
   );
 
-  res.json({ success: true, UserID: result.lastInsertRowid });
+  res.json({ success: true, UserID: result.lastInsertId });
 });
 
-router.post("/manage", requireAdmin, (req: Request, res: Response) => {
-  const db = getDb();
+router.post("/manage", requireAdmin, async (req: Request, res: Response) => {
   const { action, users: userIds } = req.body;
 
   if (!action || !userIds || !Array.isArray(userIds) || userIds.length === 0) {
@@ -160,22 +150,26 @@ router.post("/manage", requireAdmin, (req: Request, res: Response) => {
   for (const userId of userIds) {
     switch (action) {
       case "graduate":
-        db.prepare("UPDATE i3_Users SET Comper = 0 WHERE UserID = ?").run(
+        await dbRun(
+          "UPDATE i3_Users SET Comper = 0 WHERE UserID = ?",
           userId
         );
         break;
       case "ungraduate":
-        db.prepare("UPDATE i3_Users SET Comper = 1 WHERE UserID = ?").run(
+        await dbRun(
+          "UPDATE i3_Users SET Comper = 1 WHERE UserID = ?",
           userId
         );
         break;
       case "hide":
-        db.prepare("UPDATE i3_Users SET Hidden = 1 WHERE UserID = ?").run(
+        await dbRun(
+          "UPDATE i3_Users SET Hidden = 1 WHERE UserID = ?",
           userId
         );
         break;
       case "unhide":
-        db.prepare("UPDATE i3_Users SET Hidden = 0 WHERE UserID = ?").run(
+        await dbRun(
+          "UPDATE i3_Users SET Hidden = 0 WHERE UserID = ?",
           userId
         );
         break;
@@ -190,12 +184,12 @@ router.post("/manage", requireAdmin, (req: Request, res: Response) => {
 router.post(
   "/:id/reset-password",
   requireAdmin,
-  (req: Request, res: Response) => {
-    const db = getDb();
+  async (req: Request, res: Response) => {
     const userId = req.params.id;
     const salt = bcrypt.genSaltSync(10);
     const hash = bcrypt.hashSync("password", salt);
-    db.prepare("UPDATE i3_Passwords SET hash = ? WHERE UserID = ?").run(
+    await dbRun(
+      "UPDATE i3_Passwords SET hash = ? WHERE UserID = ?",
       hash,
       userId
     );
@@ -206,14 +200,14 @@ router.post(
 router.post(
   "/:id/make-admin",
   requireAdmin,
-  (req: Request, res: Response) => {
-    const db = getDb();
+  async (req: Request, res: Response) => {
     const userId = req.params.id;
-    const existing = db
-      .prepare("SELECT UserID FROM i3_Admins WHERE UserID = ?")
-      .get(userId);
+    const existing = await dbGet(
+      "SELECT UserID FROM i3_Admins WHERE UserID = ?",
+      userId
+    );
     if (!existing) {
-      db.prepare("INSERT INTO i3_Admins (UserID) VALUES (?)").run(userId);
+      await dbRun("INSERT INTO i3_Admins (UserID) VALUES (?)", userId);
     }
     res.json({ success: true });
   }
@@ -222,10 +216,9 @@ router.post(
 router.post(
   "/:id/revoke-admin",
   requireAdmin,
-  (req: Request, res: Response) => {
-    const db = getDb();
+  async (req: Request, res: Response) => {
     const userId = req.params.id;
-    db.prepare("DELETE FROM i3_Admins WHERE UserID = ?").run(userId);
+    await dbRun("DELETE FROM i3_Admins WHERE UserID = ?", userId);
     res.json({ success: true });
   }
 );

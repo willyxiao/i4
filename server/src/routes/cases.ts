@@ -1,11 +1,10 @@
 import { Router, Request, Response } from "express";
-import { getDb } from "../db";
+import { dbAll } from "../db";
 import { requireAuth } from "../middleware/auth";
 
 const router = Router();
 
-router.get("/", requireAuth, (req: Request, res: Response) => {
-  const db = getDb();
+router.get("/", requireAuth, async (req: Request, res: Response) => {
   const { type, userId } = req.query;
 
   let query = "";
@@ -13,7 +12,6 @@ router.get("/", requireAuth, (req: Request, res: Response) => {
 
   switch (type) {
     case "priority": {
-      // Get urgent + never contacted clients
       query = `
         SELECT c.*, ct.Description as Priority,
           (SELECT con.ContactTypeID FROM dbi4_Contacts con
@@ -78,7 +76,7 @@ router.get("/", requireAuth, (req: Request, res: Response) => {
       return res.status(400).json({ error: "Invalid case type" });
   }
 
-  const cases = db.prepare(query).all(...params);
+  const cases = await dbAll(query, ...params);
   res.json(cases);
 });
 

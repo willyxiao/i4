@@ -1,22 +1,50 @@
-import Database from "better-sqlite3";
 import path from "path";
-import { seedDatabase } from "./seed";
 
-const DB_PATH = path.join(__dirname, "..", "i4.db");
+type DbBackend = "sqlite" | "mysql";
 
-let db: Database.Database;
-
-export function getDb(): Database.Database {
-  if (!db) {
-    db = new Database(DB_PATH);
-    db.pragma("journal_mode = WAL");
-    db.pragma("foreign_keys = ON");
-    initSchema(db);
-  }
-  return db;
+interface RunResult {
+  lastInsertId: number;
+  changes: number;
 }
 
-function initSchema(db: Database.Database) {
+let backend: DbBackend;
+let sqliteDb: import("better-sqlite3").Database;
+let mysqlPool: import("mysql2/promise").Pool;
+
+export function getBackend(): DbBackend {
+  return backend;
+}
+
+export async function initDb(): Promise<void> {
+  if (process.env.MYSQL_HOST) {
+    backend = "mysql";
+    const mysql = await import("mysql2/promise");
+    mysqlPool = mysql.createPool({
+      host: process.env.MYSQL_HOST,
+      user: process.env.MYSQL_USER || "root",
+      password: process.env.MYSQL_PASSWORD || "",
+      database: process.env.MYSQL_DATABASE || "i4",
+      port: Number(process.env.MYSQL_PORT) || 3306,
+      waitForConnections: true,
+      connectionLimit: 10,
+    });
+    // Verify connection
+    const conn = await mysqlPool.getConnection();
+    conn.release();
+    console.log("Connected to MySQL database");
+  } else {
+    backend = "sqlite";
+    const BetterSqlite3 = (await import("better-sqlite3")).default;
+    const DB_PATH = path.join(__dirname, "..", "i4.db");
+    sqliteDb = new BetterSqlite3(DB_PATH);
+    sqliteDb.pragma("journal_mode = WAL");
+    sqliteDb.pragma("foreign_keys = ON");
+    initSqliteSchema(sqliteDb);
+    console.log("Using SQLite database (local dev)");
+  }
+}
+
+function initSqliteSchema(db: import("better-sqlite3").Database) {
   const tableExists = db
     .prepare(
       "SELECT name FROM sqlite_master WHERE type='table' AND name='i3_Users'"
@@ -132,5 +160,88 @@ function initSchema(db: Database.Database) {
     );
   `);
 
+  // Seed demo data for local dev
+  const { seedDatabase } = require("./seed");
   seedDatabase(db);
+}
+
+// --- Query abstraction ---
+
+export async function dbGet<T = any>(
+  sql: string,
+  ...params: any[]
+): Promise<T | undefined> {
+  if (backend === "mysql") {
+    const [rows] = await mysqlPool.execute(sql, params);
+    return (rows as T[])[0];
+  }
+  return sqliteDb.prepare(sql).get(...params) as T | undefined;
+}
+
+export async function dbAll<T = any>(
+  sql: string,
+  ...params: any[]
+): Promise<T[]> {
+  if (backend === "mysql") {
+    const [rows] = await mysqlPool.execute(sql, params);
+    return rows as T[];
+  }
+  return sqliteDb.prepare(sql).all(...params) as T[];
+}
+
+export async function dbRun(
+  sql: string,
+  ...params: any[]
+): Promise<RunResult> {
+  if (backend === "mysql") {
+    const [result] = await mysqlPool.execute(sql, params);
+    const r = result as any;
+    return {
+      lastInsertId: r.insertId ?? 0,
+      changes: r.affectedRows ?? 0,
+    };
+  }
+  const result = sqliteDb.prepare(sql).run(...params);
+  return {
+    lastInsertId: Number(result.lastInsertRowid),
+    changes: result.changes,
+  };
+}
+
+export async function dbExec(sql: string): Promise<void> {
+  if (backend === "mysql") {
+    await mysqlPool.query(sql);
+  } else {
+    sqliteDb.exec(sql);
+  }
+}
+
+// --- SQL dialect helpers ---
+
+export function sqlRandom(): string {
+  return backend === "mysql" ? "RAND()" : "RANDOM()";
+}
+
+export function sqlMonth(col: string): string {
+  return backend === "mysql"
+    ? `MONTH(${col})`
+    : `CAST(strftime('%m', ${col}) AS INTEGER)`;
+}
+
+export function sqlYear(col: string): string {
+  return backend === "mysql"
+    ? `YEAR(${col})`
+    : `CAST(strftime('%Y', ${col}) AS INTEGER)`;
+}
+
+export function sqlDay(col: string): string {
+  return backend === "mysql"
+    ? `DAY(${col})`
+    : `CAST(strftime('%d', ${col}) AS INTEGER)`;
+}
+
+export function sqlTimeDiffSeconds(end: string, start: string): string {
+  return backend === "mysql"
+    ? `TIMESTAMPDIFF(SECOND, ${start}, ${end})`
+    : `(julianday(${end}) - julianday(${start})) * 86400`;
 }

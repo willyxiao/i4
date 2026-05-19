@@ -2,6 +2,7 @@ import express from "express";
 import session from "express-session";
 import cors from "cors";
 import path from "path";
+import { initDb } from "./db";
 import authRoutes from "./routes/auth";
 import clientRoutes from "./routes/clients";
 import contactRoutes from "./routes/contacts";
@@ -16,7 +17,7 @@ const PORT = process.env.PORT || 3001;
 
 app.use(
   cors({
-    origin: "http://localhost:5173",
+    origin: process.env.CORS_ORIGIN || "http://localhost:5173",
     credentials: true,
   })
 );
@@ -54,6 +55,14 @@ app.get("*", (_req, res) => {
   res.sendFile(path.join(clientDist, "index.html"));
 });
 
-app.listen(PORT, () => {
-  console.log(`i4 server running on http://localhost:${PORT}`);
+async function main() {
+  await initDb();
+  app.listen(PORT, () => {
+    console.log(`i4 server running on http://localhost:${PORT}`);
+  });
+}
+
+main().catch((err) => {
+  console.error("Failed to start server:", err);
+  process.exit(1);
 });

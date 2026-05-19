@@ -1,48 +1,39 @@
 import { Router, Request, Response } from "express";
-import { getDb } from "../db";
+import { dbAll, dbGet, sqlRandom } from "../db";
 import { requireAuth } from "../middleware/auth";
 
 const router = Router();
 
-router.get("/contact-types", requireAuth, (_req: Request, res: Response) => {
-  const db = getDb();
-  const types = db
-    .prepare(
-      "SELECT ContactTypeID, Description FROM db_ContactTypes WHERE Visible = 1 ORDER BY Description"
-    )
-    .all();
+router.get("/contact-types", requireAuth, async (_req: Request, res: Response) => {
+  const types = await dbAll(
+    "SELECT ContactTypeID, Description FROM db_ContactTypes WHERE Visible = 1 ORDER BY Description"
+  );
   res.json(types);
 });
 
-router.get("/priorities", requireAuth, (_req: Request, res: Response) => {
-  const db = getDb();
-  const priorities = db
-    .prepare(
-      "SELECT CaseTypeID, Description FROM db_CaseTypes WHERE Deprecated = 0 ORDER BY Description"
-    )
-    .all();
+router.get("/priorities", requireAuth, async (_req: Request, res: Response) => {
+  const priorities = await dbAll(
+    "SELECT CaseTypeID, Description FROM db_CaseTypes WHERE Deprecated = 0 ORDER BY Description"
+  );
   res.json(priorities);
 });
 
-router.get("/categories", requireAuth, (_req: Request, res: Response) => {
-  const db = getDb();
-  const categories = db
-    .prepare(
-      "SELECT CategoryID, Description FROM db_Categories ORDER BY SortKey"
-    )
-    .all();
+router.get("/categories", requireAuth, async (_req: Request, res: Response) => {
+  const categories = await dbAll(
+    "SELECT CategoryID, Description FROM db_Categories ORDER BY SortKey"
+  );
   res.json(categories);
 });
 
-router.get("/quote", (_req: Request, res: Response) => {
-  const db = getDb();
-  const quote = db
-    .prepare("SELECT quote FROM i3_Quotes ORDER BY RANDOM() LIMIT 1")
-    .get() as any;
-  res.json({ quote: quote?.quote || '"Make each day your masterpiece." - John Wooden' });
+router.get("/quote", async (_req: Request, res: Response) => {
+  const quote = await dbGet<any>(
+    `SELECT quote FROM i3_Quotes ORDER BY ${sqlRandom()} LIMIT 1`
+  );
+  res.json({
+    quote: quote?.quote || '"Make each day your masterpiece." - John Wooden',
+  });
 });
 
-// US States
 router.get("/states", (_req: Request, res: Response) => {
   res.json([
     { code: "", name: "" },

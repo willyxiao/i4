@@ -1,11 +1,10 @@
 import { Router, Request, Response } from "express";
-import { getDb } from "../db";
+import { dbRun, dbGet } from "../db";
 import { requireAuth } from "../middleware/auth";
 
 const router = Router();
 
-router.post("/", requireAuth, (req: Request, res: Response) => {
-  const db = getDb();
+router.post("/", requireAuth, async (req: Request, res: Response) => {
   const { ClientID, ContactTypeID, ContactDate, ContactSummary } = req.body;
 
   if (!ClientID) {
@@ -15,43 +14,39 @@ router.post("/", requireAuth, (req: Request, res: Response) => {
   const now = new Date().toISOString().replace("T", " ").substring(0, 19);
   const date = ContactDate || now;
 
-  const result = db
-    .prepare(
-      `INSERT INTO dbi4_Contacts (ClientID, ContactTypeID, ContactDate, ContactEditDate,
-        UserAddedID, UserEditID, ContactSummary) VALUES (?, ?, ?, ?, ?, ?, ?)`
-    )
-    .run(
-      ClientID,
-      ContactTypeID || 0,
-      date,
-      date,
-      req.session.userId,
-      req.session.userId,
-      ContactSummary || ""
-    );
+  const result = await dbRun(
+    `INSERT INTO dbi4_Contacts (ClientID, ContactTypeID, ContactDate, ContactEditDate,
+      UserAddedID, UserEditID, ContactSummary) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    ClientID,
+    ContactTypeID || 0,
+    date,
+    date,
+    req.session.userId,
+    req.session.userId,
+    ContactSummary || ""
+  );
 
-  const contactType = db
-    .prepare("SELECT Description FROM db_ContactTypes WHERE ContactTypeID = ?")
-    .get(ContactTypeID || 0) as any;
+  const contactType = await dbGet<any>(
+    "SELECT Description FROM db_ContactTypes WHERE ContactTypeID = ?",
+    ContactTypeID || 0
+  );
 
   res.json({
     success: true,
-    ContactID: result.lastInsertRowid,
+    ContactID: result.lastInsertId,
     ContactType: contactType?.Description || "Unknown",
   });
 });
 
-router.put("/:id", requireAuth, (req: Request, res: Response) => {
-  const db = getDb();
+router.put("/:id", requireAuth, async (req: Request, res: Response) => {
   const contactId = req.params.id;
   const { ContactTypeID, ContactDate, ContactSummary } = req.body;
 
   const now = new Date().toISOString().replace("T", " ").substring(0, 19);
 
-  db.prepare(
+  await dbRun(
     `UPDATE dbi4_Contacts SET ContactTypeID=?, ContactDate=?, ContactEditDate=?,
-      UserEditID=?, ContactSummary=? WHERE ContactID=?`
-  ).run(
+      UserEditID=?, ContactSummary=? WHERE ContactID=?`,
     ContactTypeID || 0,
     ContactDate || now,
     now,
@@ -60,9 +55,10 @@ router.put("/:id", requireAuth, (req: Request, res: Response) => {
     contactId
   );
 
-  const contactType = db
-    .prepare("SELECT Description FROM db_ContactTypes WHERE ContactTypeID = ?")
-    .get(ContactTypeID || 0) as any;
+  const contactType = await dbGet<any>(
+    "SELECT Description FROM db_ContactTypes WHERE ContactTypeID = ?",
+    ContactTypeID || 0
+  );
 
   res.json({
     success: true,
@@ -70,11 +66,9 @@ router.put("/:id", requireAuth, (req: Request, res: Response) => {
   });
 });
 
-router.delete("/:id", requireAuth, (req: Request, res: Response) => {
-  const db = getDb();
+router.delete("/:id", requireAuth, async (req: Request, res: Response) => {
   const contactId = req.params.id;
-
-  db.prepare("DELETE FROM dbi4_Contacts WHERE ContactID = ?").run(contactId);
+  await dbRun("DELETE FROM dbi4_Contacts WHERE ContactID = ?", contactId);
   res.json({ success: true });
 });
 

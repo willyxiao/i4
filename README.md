@@ -23,11 +23,31 @@ This starts both the backend (port 3001) and frontend (port 5173). Open http://l
 
 The SQLite database auto-creates and seeds demo data on first run.
 
+## Database
+
+The app supports both **SQLite** (local dev) and **MySQL** (production).
+
+### Local Development (default)
+No configuration needed. A SQLite file (`server/i4.db`) is auto-created with demo data.
+
+### Production (MySQL)
+Set these environment variables to connect to the existing MySQL database:
+
+```bash
+MYSQL_HOST=your-mysql-host
+MYSQL_USER=your-username
+MYSQL_PASSWORD=your-password
+MYSQL_DATABASE=your-database
+MYSQL_PORT=3306  # optional, defaults to 3306
+```
+
+When `MYSQL_HOST` is set, the app uses MySQL. The production database schema is unchanged — the Node.js app connects to the same MySQL tables the PHP app used.
+
 ## Tech Stack
 
 - **Frontend**: React 18 + TypeScript + Vite + Tailwind CSS + React Router v6 + Recharts
-- **Backend**: Node.js + Express + TypeScript + SQLite (better-sqlite3) + express-session
-- **Database**: SQLite (file-based, zero config)
+- **Backend**: Node.js + Express + TypeScript + mysql2 + better-sqlite3 + express-session
+- **Database**: MySQL (production) / SQLite (local dev)
 
 ## Project Structure
 
@@ -43,7 +63,7 @@ The SQLite database auto-creates and seeds demo data on first run.
 │   └── src/
 │       ├── routes/  # API route handlers
 │       ├── middleware/
-│       ├── db.ts    # SQLite initialization
+│       ├── db.ts    # Database abstraction (MySQL/SQLite)
 │       └── seed.ts  # Demo data seeding
 └── package.json     # Root workspace config
 ```
